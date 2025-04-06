@@ -99,12 +99,10 @@ defmodule Alchemind.OpenAITest do
 
       stub(stub_name, fn conn ->
         assert conn.request_path == "/v1/chat/completions"
-        
-        # Extract the request body to verify the model
+
         {:ok, body, _conn} = Plug.Conn.read_body(conn)
         body_params = Jason.decode!(body)
-        
-        # Check that the default model from the client is used
+
         assert body_params["model"] == "gpt-4o"
 
         json(conn, %{
@@ -134,14 +132,97 @@ defmodule Alchemind.OpenAITest do
         Alchemind.OpenAI.new(
           api_key: "test-key-123",
           http_client: http_client,
-          model: "gpt-4o"  # Set default model in client
+          model: "gpt-4o"
         )
 
-      # Call without providing model
       result = Alchemind.OpenAI.complete(client, messages)
 
       assert {:ok, response} = result
       assert response.model == "gpt-4o"
+    end
+  end
+
+  describe "transcription/3" do
+    test "successfully transcribes audio" do
+      audio_binary = <<0, 1, 2, 3, 4, 5>>
+
+      stub_name = :openai_transcription_stub
+
+      stub(stub_name, fn conn ->
+        assert conn.request_path == "/v1/audio/transcriptions"
+        assert conn.host == "api.openai.com"
+
+        content_type = Plug.Conn.get_req_header(conn, "content-type")
+        assert Enum.any?(content_type, &String.contains?(&1, "multipart"))
+
+        {:ok, body, _conn} = Plug.Conn.read_body(conn)
+
+        # For multipart form data, we can't easily decode it in the test
+        # Instead, just verify that the body is not empty
+        assert body != ""
+
+        auth_header =
+          Enum.find(conn.req_headers, fn {name, _} ->
+            String.downcase(name) == "authorization"
+          end)
+
+        assert auth_header == {"authorization", "Bearer test-key-123"}
+
+        json(conn, %{
+          "text" => "Hello, this is a transcription."
+        })
+      end)
+
+      http_client = fn url, options ->
+        req = Req.new(plug: {Req.Test, stub_name})
+        Req.post(req, url: url, headers: options[:headers], form_multipart: options[:form_multipart])
+      end
+
+      {:ok, client} =
+        Alchemind.OpenAI.new(
+          api_key: "test-key-123",
+          http_client: http_client
+        )
+
+      result = Alchemind.OpenAI.transcription(client, audio_binary, language: "en")
+
+      assert {:ok, text} = result
+      assert text == "Hello, this is a transcription."
+    end
+
+    test "returns error on invalid response" do
+      audio_binary = <<0, 1, 2, 3, 4, 5>>
+
+      stub_name = :openai_transcription_error_stub
+
+      stub(stub_name, fn conn ->
+        Plug.Conn.resp(
+          conn,
+          400,
+          Jason.encode!(%{
+            "error" => %{
+              "message" => "Invalid file format",
+              "type" => "invalid_request_error"
+            }
+          })
+        )
+      end)
+
+      http_client = fn url, options ->
+        req = Req.new(plug: {Req.Test, stub_name})
+        Req.post(req, url: url, headers: options[:headers], form_multipart: options[:form_multipart])
+      end
+
+      {:ok, client} =
+        Alchemind.OpenAI.new(
+          api_key: "test-key-123",
+          http_client: http_client
+        )
+
+      result = Alchemind.OpenAI.transcription(client, audio_binary)
+
+      assert {:error, error} = result
+      assert error["error"]["message"] == "Invalid file format"
     end
   end
 end

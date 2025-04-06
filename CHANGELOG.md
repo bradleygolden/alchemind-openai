@@ -11,5 +11,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Initial OpenAI provider implementation
 - Integration with alchemind core interface
 - Basic OpenAI API client functionality
+- Support for OpenAI transcription API
 
 [Unreleased]: https://github.com/bradleygolden/alchemind/compare/HEAD...HEAD

@@ -126,7 +126,7 @@ defmodule Alchemind.OpenAI do
   def complete(%Client{} = client, messages, opts, additional_opts) when is_list(opts) and is_list(additional_opts) do
     merged_opts = Keyword.merge(opts, additional_opts)
     model = merged_opts[:model] || client.model
-    
+
     if model do
       do_complete(client, messages, model, merged_opts)
     else
@@ -203,5 +203,118 @@ defmodule Alchemind.OpenAI do
       model: body["model"],
       choices: choices
     }
+  end
+
+  @doc """
+  Transcribes audio to text using OpenAI's API.
+
+  ## Parameters
+
+  - `client`: OpenAI client created with new/1
+  - `audio_binary`: Binary audio data
+  - `opts`: Options for the transcription request
+
+  ## Options
+
+  - `:model` - OpenAI transcription model to use (default: "whisper-1")
+  - `:language` - Language of the audio (default: nil, auto-detect)
+  - `:prompt` - Optional text to guide the model's transcription
+  - `:response_format` - Format of the transcript (default: "json")
+  - `:temperature` - Controls randomness (0.0 to 1.0, default: 0)
+
+  ## Examples
+
+      iex> {:ok, client} = Alchemind.OpenAI.new(api_key: "sk-...")
+      iex> audio_binary = File.read!("audio.mp3")
+      iex> Alchemind.OpenAI.transcription(client, audio_binary, language: "en")
+      {:ok, "This is a transcription of the audio."}
+
+  ## Returns
+
+  - `{:ok, text}` - Successful transcription with text
+  - `{:error, reason}` - Error with reason
+  """
+  @impl Alchemind
+  def transcription(%Client{} = client, audio_binary, opts \\ []) do
+    model = opts[:model] || "whisper-1"
+
+    form_data = [
+      file: {audio_binary, filename: "audio.webm", content_type: "audio/webm"},
+      model: model
+    ]
+
+    form_data =
+      if opts[:response_format] do
+        form_data
+      else
+        [{:response_format, "text"} | form_data]
+      end
+
+    form_data =
+      if language = opts[:language] do
+        [{:language, language} | form_data]
+      else
+        form_data
+      end
+
+    form_data =
+      if prompt = opts[:prompt] do
+        [{:prompt, prompt} | form_data]
+      else
+        form_data
+      end
+
+    form_data =
+      if temperature = opts[:temperature] do
+        [{:temperature, to_string(temperature)} | form_data]
+      else
+        form_data
+      end
+
+    req_options = [
+      headers: [
+        {"Authorization", "Bearer #{client.api_key}"}
+      ],
+      form_multipart: form_data,
+      connect_options: [timeout: 60_000],
+      receive_timeout: 60_000
+    ]
+
+    "#{client.base_url}/audio/transcriptions"
+    |> client.http_client.(req_options)
+    |> handle_transcription_response()
+  end
+
+  defp handle_transcription_response({:ok, %{status: status, body: body}}) when status in 200..299 do
+    text =
+      case body do
+        %{"text" => text} -> text
+        text when is_binary(text) -> text
+        _ -> nil
+      end
+
+    if text do
+      {:ok, text}
+    else
+      {:error, "Invalid response format"}
+    end
+  end
+
+  defp handle_transcription_response({:ok, %{status: _, body: body}}) do
+    body =
+      if is_binary(body) do
+        case Jason.decode(body) do
+          {:ok, decoded} -> decoded
+          _ -> %{"error" => %{"message" => body}}
+        end
+      else
+        body
+      end
+
+    {:error, body}
+  end
+
+  defp handle_transcription_response({:error, reason}) do
+    {:error, reason}
   end
 end
