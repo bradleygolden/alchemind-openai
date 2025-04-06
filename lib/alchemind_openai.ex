@@ -18,13 +18,15 @@ defmodule Alchemind.OpenAI do
             provider: module(),
             api_key: String.t(),
             base_url: String.t(),
-            http_client: function()
+            http_client: function(),
+            model: String.t() | nil
           }
 
     defstruct provider: Alchemind.OpenAI,
               api_key: nil,
               base_url: nil,
-              http_client: nil
+              http_client: nil,
+              model: nil
   end
 
   @doc """
@@ -35,10 +37,14 @@ defmodule Alchemind.OpenAI do
   - `:api_key` - OpenAI API key (required)
   - `:base_url` - API base URL (default: #{@default_base_url})
   - `:http_client` - Function to make HTTP requests (default: Req.post/2)
+  - `:model` - Default model to use (optional, can be overridden in complete calls)
 
   ## Examples
 
       iex> Alchemind.OpenAI.new(api_key: "sk-...")
+      {:ok, %Alchemind.OpenAI.Client{...}}
+
+      iex> Alchemind.OpenAI.new(api_key: "sk-...", model: "gpt-4o")
       {:ok, %Alchemind.OpenAI.Client{...}}
 
   ## Returns
@@ -56,11 +62,13 @@ defmodule Alchemind.OpenAI do
     else
       base_url = opts[:base_url] || @default_base_url
       http_client = opts[:http_client] || (&Req.post/2)
+      model = opts[:model]
 
       client = %Client{
         api_key: api_key,
         base_url: base_url,
-        http_client: http_client
+        http_client: http_client,
+        model: model
       }
 
       {:ok, client}
@@ -74,38 +82,56 @@ defmodule Alchemind.OpenAI do
 
   - `client`: OpenAI client created with new/1
   - `messages`: List of messages in the conversation
-  - `model`: OpenAI model to use (e.g. "gpt-4o", "gpt-4o-mini")
   - `callback_or_opts`: Callback function for streaming (not supported) or options
-  - `opts`: Additional options for the completion request
+  - `opts`: Additional options for the completion request (when callback is provided)
 
   ## Options
 
+  - `:model` - OpenAI model to use (required unless specified in client)
   - `:temperature` - Controls randomness (0.0 to 2.0)
   - `:max_tokens` - Maximum number of tokens to generate
 
-  ## Example
+  ## Examples
+
+  Using model in options:
 
       iex> {:ok, client} = Alchemind.OpenAI.new(api_key: "sk-...")
       iex> messages = [
       ...>   %{role: :system, content: "You are a helpful assistant."},
       ...>   %{role: :user, content: "Hello, world!"}
       ...> ]
-      iex> Alchemind.OpenAI.complete(client, messages, "gpt-4o", temperature: 0.7)
+      iex> Alchemind.OpenAI.complete(client, messages, model: "gpt-4o", temperature: 0.7)
+
+  Using default model from client:
+
+      iex> {:ok, client} = Alchemind.OpenAI.new(api_key: "sk-...", model: "gpt-4o")
+      iex> messages = [
+      ...>   %{role: :system, content: "You are a helpful assistant."},
+      ...>   %{role: :user, content: "Hello, world!"}
+      ...> ]
+      iex> Alchemind.OpenAI.complete(client, messages, temperature: 0.7)
 
   Note: Streaming is not supported in the direct OpenAI implementation.
   Use OpenAILangChain for streaming support.
   """
   @impl Alchemind
-  @spec complete(Client.t(), [Alchemind.message()], String.t(), Alchemind.stream_callback() | keyword(), keyword()) ::
+  @spec complete(Client.t(), [Alchemind.message()], Alchemind.stream_callback() | keyword(), keyword()) ::
           Alchemind.completion_result()
-  def complete(client, messages, model, callback_or_opts \\ [], opts \\ [])
+  def complete(client, messages, callback_or_opts \\ [], opts \\ [])
 
-  def complete(%Client{} = _client, _messages, _model, callback, _opts) when is_function(callback, 1) do
+  def complete(%Client{} = _client, _messages, callback, _opts) when is_function(callback, 1) do
     {:error, %{error: %{message: "Streaming is not yet implemented for the OpenAI provider."}}}
   end
 
-  def complete(%Client{} = client, messages, model, opts, _) when is_list(opts) do
-    do_complete(client, messages, model, opts)
+  def complete(%Client{} = client, messages, opts, additional_opts) when is_list(opts) and is_list(additional_opts) do
+    merged_opts = Keyword.merge(opts, additional_opts)
+    model = merged_opts[:model] || client.model
+    
+    if model do
+      do_complete(client, messages, model, merged_opts)
+    else
+      {:error, %{error: %{message: "No model specified. Provide a model via the client or as an option."}}}
+    end
   end
 
   defp do_complete(%Client{} = client, messages, model, opts) do

@@ -26,7 +26,7 @@ defmodule Alchemind.OpenAITest do
     end
   end
 
-  describe "complete/4" do
+  describe "complete/3" do
     test "successfully completes a conversation" do
       messages = [
         %{role: :system, content: "You are a helpful assistant."},
@@ -76,7 +76,7 @@ defmodule Alchemind.OpenAITest do
           http_client: http_client
         )
 
-      result = Alchemind.OpenAI.complete(client, messages, "gpt-4o")
+      result = Alchemind.OpenAI.complete(client, messages, model: "gpt-4o")
 
       assert {:ok, response} = result
       assert response.id == "chatcmpl-123"
@@ -87,6 +87,61 @@ defmodule Alchemind.OpenAITest do
       assistant_message = List.first(response.choices).message
       assert assistant_message.role == :assistant
       assert assistant_message.content == "Hello! How can I assist you today?"
+    end
+
+    test "uses model from client when not specified in options" do
+      messages = [
+        %{role: :system, content: "You are a helpful assistant."},
+        %{role: :user, content: "Hello, world!"}
+      ]
+
+      stub_name = :openai_api_stub_default_model
+
+      stub(stub_name, fn conn ->
+        assert conn.request_path == "/v1/chat/completions"
+        
+        # Extract the request body to verify the model
+        {:ok, body, _conn} = Plug.Conn.read_body(conn)
+        body_params = Jason.decode!(body)
+        
+        # Check that the default model from the client is used
+        assert body_params["model"] == "gpt-4o"
+
+        json(conn, %{
+          "id" => "chatcmpl-123",
+          "object" => "chat.completion",
+          "created" => 1_713_704_963,
+          "model" => "gpt-4o",
+          "choices" => [
+            %{
+              "index" => 0,
+              "message" => %{
+                "role" => "assistant",
+                "content" => "Hello! How can I assist you today?"
+              },
+              "finish_reason" => "stop"
+            }
+          ]
+        })
+      end)
+
+      http_client = fn url, options ->
+        req = Req.new(plug: {Req.Test, stub_name})
+        Req.post(req, url: url, headers: options[:headers], json: options[:json])
+      end
+
+      {:ok, client} =
+        Alchemind.OpenAI.new(
+          api_key: "test-key-123",
+          http_client: http_client,
+          model: "gpt-4o"  # Set default model in client
+        )
+
+      # Call without providing model
+      result = Alchemind.OpenAI.complete(client, messages)
+
+      assert {:ok, response} = result
+      assert response.model == "gpt-4o"
     end
   end
 end
