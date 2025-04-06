@@ -68,13 +68,14 @@ defmodule Alchemind.OpenAI do
   end
 
   @doc """
-  Completes a conversation using OpenAI's API.
+  Completes a conversation using OpenAI's API with optional streaming.
 
   ## Parameters
 
   - `client`: OpenAI client created with new/1
   - `messages`: List of messages in the conversation
   - `model`: OpenAI model to use (e.g. "gpt-4o", "gpt-4o-mini")
+  - `callback_or_opts`: Callback function for streaming (not supported) or options
   - `opts`: Additional options for the completion request
 
   ## Options
@@ -90,11 +91,24 @@ defmodule Alchemind.OpenAI do
       ...>   %{role: :user, content: "Hello, world!"}
       ...> ]
       iex> Alchemind.OpenAI.complete(client, messages, "gpt-4o", temperature: 0.7)
+
+  Note: Streaming is not supported in the direct OpenAI implementation.
+  Use OpenAILangChain for streaming support.
   """
   @impl Alchemind
-  @spec complete(Client.t(), [Alchemind.message()], String.t(), keyword()) ::
+  @spec complete(Client.t(), [Alchemind.message()], String.t(), Alchemind.stream_callback() | keyword(), keyword()) ::
           Alchemind.completion_result()
-  def complete(%Client{} = client, messages, model, opts \\ []) do
+  def complete(client, messages, model, callback_or_opts \\ [], opts \\ [])
+
+  def complete(%Client{} = _client, _messages, _model, callback, _opts) when is_function(callback, 1) do
+    {:error, %{error: %{message: "Streaming is not yet implemented for the OpenAI provider."}}}
+  end
+
+  def complete(%Client{} = client, messages, model, opts, _) when is_list(opts) do
+    do_complete(client, messages, model, opts)
+  end
+
+  defp do_complete(%Client{} = client, messages, model, opts) do
     formatted_messages =
       Enum.map(messages, fn message ->
         %{
