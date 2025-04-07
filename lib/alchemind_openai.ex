@@ -317,4 +317,83 @@ defmodule Alchemind.OpenAI do
   defp handle_transcription_response({:error, reason}) do
     {:error, reason}
   end
+
+  @doc """
+  Converts text to speech using OpenAI's API.
+
+  ## Parameters
+
+  - `client`: OpenAI client created with new/1
+  - `input`: Text to convert to speech
+  - `opts`: Options for the speech request
+
+  ## Options
+
+  - `:model` - OpenAI text-to-speech model to use (default: "gpt-4o-mini-tts")
+  - `:voice` - Voice to use (default: "alloy")
+  - `:response_format` - Format of the audio (default: "mp3")
+  - `:speed` - Speed of the generated audio (optional)
+
+  ## Examples
+
+      iex> {:ok, client} = Alchemind.OpenAI.new(api_key: "sk-...")
+      iex> Alchemind.OpenAI.speech(client, "Hello, world!", voice: "echo")
+      {:ok, <<binary audio data>>}
+
+  ## Returns
+
+  - `{:ok, audio_binary}` - Successful speech generation with audio binary
+  - `{:error, reason}` - Error with reason
+  """
+  @impl Alchemind
+  def speech(%Client{} = client, input, opts \\ []) when is_binary(input) do
+    payload = %{
+      model: Keyword.get(opts, :model, "gpt-4o-mini-tts"),
+      input: input,
+      voice: Keyword.get(opts, :voice, "alloy"),
+      response_format: Keyword.get(opts, :response_format, "mp3")
+    }
+
+    payload =
+      if speed = Keyword.get(opts, :speed) do
+        Map.put(payload, :speed, speed)
+      else
+        payload
+      end
+
+    case client.http_client.("#{client.base_url}/audio/speech",
+           headers: [
+             {"Authorization", "Bearer #{client.api_key}"},
+             {"Content-Type", "application/json"}
+           ],
+           json: payload
+         ) do
+      {:ok, %{status: 200, body: body}} ->
+        {:ok, body}
+
+      {:ok, %{status: status, body: body}} when status in [400, 401, 429, 500] ->
+        error_message =
+          case body do
+            %{"error" => %{"message" => msg}} ->
+              msg
+
+            "{\"error\":" <> _ = json_body when is_binary(json_body) ->
+              case Jason.decode(json_body) do
+                {:ok, %{"error" => %{"message" => msg}}} -> msg
+                _ -> "Failed to generate speech (Status: #{status})"
+              end
+
+            _ ->
+              "Failed to generate speech (Status: #{status})"
+          end
+
+        {:error, error_message}
+
+      {:error, reason} ->
+        {:error, reason}
+
+      _response ->
+        {:error, "Failed to generate speech"}
+    end
+  end
 end

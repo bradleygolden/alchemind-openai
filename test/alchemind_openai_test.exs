@@ -225,4 +225,90 @@ defmodule Alchemind.OpenAITest do
       assert error["error"]["message"] == "Invalid file format"
     end
   end
+
+  describe "speech/3" do
+    test "successfully converts text to speech" do
+      input_text = "Hello, this is a test."
+
+      stub_name = :openai_speech_stub
+
+      stub(stub_name, fn conn ->
+        assert conn.request_path == "/v1/audio/speech"
+
+        {:ok, body, _conn} = Plug.Conn.read_body(conn)
+        body_params = Jason.decode!(body)
+
+        assert body_params["model"] == "gpt-4o-mini-tts"
+        assert body_params["input"] == input_text
+        assert body_params["voice"] == "alloy"
+        assert body_params["response_format"] == "mp3"
+
+        auth_header =
+          Enum.find(conn.req_headers, fn {name, _} ->
+            String.downcase(name) == "authorization"
+          end)
+
+        assert auth_header == {"authorization", "Bearer test-key-123"}
+
+        audio_data = <<0, 1, 2, 3, 4, 5, 6, 7, 8, 9>>
+        Plug.Conn.resp(conn, 200, audio_data)
+      end)
+
+      http_client = fn url, options ->
+        req = Req.new(plug: {Req.Test, stub_name})
+        Req.post(req, url: url, headers: options[:headers], json: options[:json])
+      end
+
+      {:ok, client} =
+        Alchemind.OpenAI.new(
+          api_key: "test-key-123",
+          http_client: http_client,
+          base_url: "https://api.openai.com/v1"
+        )
+
+      result = Alchemind.OpenAI.speech(client, input_text)
+
+      assert {:ok, audio_data} = result
+      assert is_binary(audio_data)
+      assert audio_data == <<0, 1, 2, 3, 4, 5, 6, 7, 8, 9>>
+    end
+
+    test "returns error on API failure" do
+      input_text = "Hello, this is a test."
+
+      stub_name = :openai_speech_error_stub
+
+      stub(stub_name, fn conn ->
+        assert conn.request_path == "/v1/audio/speech"
+
+        Plug.Conn.resp(
+          conn,
+          400,
+          Jason.encode!(%{
+            "error" => %{
+              "message" => "Invalid input text",
+              "type" => "invalid_request_error"
+            }
+          })
+        )
+      end)
+
+      http_client = fn url, options ->
+        req = Req.new(plug: {Req.Test, stub_name})
+        Req.post(req, url: url, headers: options[:headers], json: options[:json])
+      end
+
+      {:ok, client} =
+        Alchemind.OpenAI.new(
+          api_key: "test-key-123",
+          http_client: http_client,
+          base_url: "https://api.openai.com/v1"
+        )
+
+      result = Alchemind.OpenAI.speech(client, input_text)
+
+      assert {:error, error_message} = result
+      assert error_message == "Invalid input text"
+    end
+  end
 end
