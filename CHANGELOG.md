@@ -7,11 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.0-rc1] - 2024-04-08
+
 ### Added
 - Initial OpenAI provider implementation
 - Integration with alchemind core interface
-- Basic OpenAI API client functionality
-- Support for OpenAI transcription API
-- Support for OpenAI text-to-speech API
+- Support for chat completion, transcription, and text-to-speech
 
-[Unreleased]: https://github.com/bradleygolden/alchemind/compare/HEAD...HEAD
+[Unreleased]: https://github.com/bradleygolden/alchemind/compare/alchemind-openai-v0.1.0-rc1...HEAD
+[0.1.0-rc1]: https://github.com/bradleygolden/alchemind/releases/tag/alchemind-openai-v0.1.0-rc1
