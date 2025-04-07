@@ -7,26 +7,37 @@ defmodule Alchemind.OpenAI do
 
   @behaviour Alchemind
 
+  use Rustler, otp_app: :alchemind_openai
+
   @default_base_url "https://api.openai.com/v1"
 
+  # NIF function declarations
+  def create_client(_api_key, _base_url), do: :erlang.nif_error(:nif_not_loaded)
+  def complete_chat(_client_resource, _messages, _model), do: :erlang.nif_error(:nif_not_loaded)
+  def transcribe_audio(_client_resource, _audio_binary, _opts), do: :erlang.nif_error(:nif_not_loaded)
+  def text_to_speech(_client_resource, _input, _opts), do: :erlang.nif_error(:nif_not_loaded)
+
   defmodule Client do
-    @moduledoc """
-    Client struct for the OpenAI provider.
-    """
+    @moduledoc false
 
     @type t :: %__MODULE__{
-            provider: module(),
             api_key: String.t(),
             base_url: String.t(),
-            http_client: function(),
-            model: String.t() | nil
+            model: String.t(),
+            rust_client: reference(),
+            provider: module()
           }
 
-    defstruct provider: Alchemind.OpenAI,
-              api_key: nil,
-              base_url: nil,
-              http_client: nil,
-              model: nil
+    @derive {Inspect, except: [:api_key]}
+    defstruct [:api_key, :base_url, :model, :rust_client, :provider]
+  end
+
+  defmodule Message do
+    @moduledoc """
+    Defines the Message struct for NIF compatibility.
+    """
+
+    defstruct [:role, :content]
   end
 
   @doc """
@@ -36,16 +47,15 @@ defmodule Alchemind.OpenAI do
 
   - `:api_key` - OpenAI API key (required)
   - `:base_url` - API base URL (default: #{@default_base_url})
-  - `:http_client` - Function to make HTTP requests (default: Req.post/2)
   - `:model` - Default model to use (optional, can be overridden in complete calls)
 
   ## Examples
 
       iex> Alchemind.OpenAI.new(api_key: "sk-...")
-      {:ok, %Alchemind.OpenAI.Client{...}}
+      {:ok, <Rust client resource>}
 
       iex> Alchemind.OpenAI.new(api_key: "sk-...", model: "gpt-4o")
-      {:ok, %Alchemind.OpenAI.Client{...}}
+      {:ok, <Rust client resource>}
 
   ## Returns
 
@@ -53,7 +63,6 @@ defmodule Alchemind.OpenAI do
   - `{:error, reason}` - Error with reason
   """
   @impl Alchemind
-  @spec new(keyword()) :: {:ok, Client.t()} | {:error, String.t()}
   def new(opts \\ []) do
     api_key = opts[:api_key]
 
@@ -61,17 +70,21 @@ defmodule Alchemind.OpenAI do
       {:error, "OpenAI API key not provided. Please provide an :api_key option."}
     else
       base_url = opts[:base_url] || @default_base_url
-      http_client = opts[:http_client] || (&Req.post/2)
-      model = opts[:model]
 
-      client = %Client{
-        api_key: api_key,
-        base_url: base_url,
-        http_client: http_client,
-        model: model
-      }
+      case create_client(api_key, base_url) do
+        rust_client when is_reference(rust_client) ->
+          {:ok,
+           %Client{
+             api_key: api_key,
+             base_url: base_url,
+             model: opts[:model],
+             rust_client: rust_client,
+             provider: __MODULE__
+           }}
 
-      {:ok, client}
+        {:error, reason} ->
+          {:error, "Failed to initialize Rust client: #{inspect(reason)}"}
+      end
     end
   end
 
@@ -115,94 +128,55 @@ defmodule Alchemind.OpenAI do
   Use OpenAILangChain for streaming support.
   """
   @impl Alchemind
-  @spec complete(Client.t(), [Alchemind.message()], Alchemind.stream_callback() | keyword(), keyword()) ::
-          Alchemind.completion_result()
   def complete(client, messages, callback_or_opts \\ [], opts \\ [])
 
-  def complete(%Client{} = _client, _messages, callback, _opts) when is_function(callback, 1) do
+  def complete(_client, _messages, callback, _opts) when is_function(callback, 1) do
     {:error, %{error: %{message: "Streaming is not yet implemented for the OpenAI provider."}}}
   end
 
-  def complete(%Client{} = client, messages, opts, additional_opts) when is_list(opts) and is_list(additional_opts) do
+  def complete(client, messages, opts, additional_opts) when is_list(opts) and is_list(additional_opts) do
+    messages = List.wrap(messages)
     merged_opts = Keyword.merge(opts, additional_opts)
     model = merged_opts[:model] || client.model
 
     if model do
-      do_complete(client, messages, model, merged_opts)
+      converted_messages =
+        Enum.map(messages, fn %{role: role, content: content} ->
+          %Message{
+            role: to_string(role),
+            content: content
+          }
+        end)
+
+      case complete_chat(client.rust_client, converted_messages, model) do
+        content when is_binary(content) ->
+          {:ok,
+           %{
+             id: "rust-client-#{System.os_time(:millisecond)}",
+             object: "chat.completion",
+             created: System.os_time(:second),
+             model: model,
+             choices: [
+               %{
+                 index: 0,
+                 message: %{
+                   role: :assistant,
+                   content: content
+                 },
+                 finish_reason: "stop"
+               }
+             ]
+           }}
+
+        {:error, reason} ->
+          {:error, %{error: %{message: "Rust client error: #{inspect(reason)}"}}}
+
+        _ ->
+          {:error, %{error: %{message: "Rust client error"}}}
+      end
     else
-      {:error, %{error: %{message: "No model specified. Provide a model via the client or as an option."}}}
+      {:error, %{error: %{message: "Model must be specified in the options for the OpenAI provider."}}}
     end
-  end
-
-  defp do_complete(%Client{} = client, messages, model, opts) do
-    formatted_messages =
-      Enum.map(messages, fn message ->
-        %{
-          "role" => Atom.to_string(message.role),
-          "content" => message.content
-        }
-      end)
-
-    body =
-      %{
-        "model" => model,
-        "messages" => formatted_messages
-      }
-      |> maybe_add_option(opts, :temperature)
-      |> maybe_add_option(opts, :max_tokens)
-
-    req_options = [
-      headers: [
-        {"Authorization", "Bearer #{client.api_key}"},
-        {"Content-Type", "application/json"}
-      ],
-      json: body
-    ]
-
-    "#{client.base_url}/chat/completions"
-    |> client.http_client.(req_options)
-    |> handle_response()
-  end
-
-  defp maybe_add_option(body, opts, key) do
-    case Keyword.get(opts, key) do
-      nil -> body
-      value -> Map.put(body, Atom.to_string(key), value)
-    end
-  end
-
-  defp handle_response({:ok, %{status: status, body: body}}) when status in 200..299 do
-    {:ok, format_response(body)}
-  end
-
-  defp handle_response({:ok, %{status: _, body: body}}) do
-    {:error, body}
-  end
-
-  defp handle_response({:error, reason}) do
-    {:error, reason}
-  end
-
-  defp format_response(body) do
-    choices =
-      Enum.map(body["choices"] || [], fn choice ->
-        %{
-          index: choice["index"],
-          message: %{
-            role: String.to_existing_atom(choice["message"]["role"]),
-            content: choice["message"]["content"]
-          },
-          finish_reason: choice["finish_reason"]
-        }
-      end)
-
-    %{
-      id: body["id"],
-      object: body["object"],
-      created: body["created"],
-      model: body["model"],
-      choices: choices
-    }
   end
 
   @doc """
@@ -226,7 +200,7 @@ defmodule Alchemind.OpenAI do
 
       iex> {:ok, client} = Alchemind.OpenAI.new(api_key: "sk-...")
       iex> audio_binary = File.read!("audio.mp3")
-      iex> Alchemind.OpenAI.transcription(client, audio_binary, language: "en")
+      iex> Alchemind.OpenAI.transcribe(client, audio_binary, language: "en")
       {:ok, "This is a transcription of the audio."}
 
   ## Returns
@@ -235,87 +209,23 @@ defmodule Alchemind.OpenAI do
   - `{:error, reason}` - Error with reason
   """
   @impl Alchemind
-  def transcription(%Client{} = client, audio_binary, opts \\ []) do
-    model = opts[:model] || "whisper-1"
+  def transcribe(client, audio_binary, opts \\ []) do
+    case transcribe_audio(client.rust_client, audio_binary, opts) do
+      text when is_binary(text) ->
+        {:ok, text}
 
-    form_data = [
-      file: {audio_binary, filename: "audio.webm", content_type: "audio/webm"},
-      model: model
-    ]
+      {:error, reason} ->
+        {:error, %{error: %{message: "Transcription failed: #{inspect(reason)}"}}}
 
-    form_data =
-      if opts[:response_format] do
-        form_data
-      else
-        [{:response_format, "text"} | form_data]
-      end
-
-    form_data =
-      if language = opts[:language] do
-        [{:language, language} | form_data]
-      else
-        form_data
-      end
-
-    form_data =
-      if prompt = opts[:prompt] do
-        [{:prompt, prompt} | form_data]
-      else
-        form_data
-      end
-
-    form_data =
-      if temperature = opts[:temperature] do
-        [{:temperature, to_string(temperature)} | form_data]
-      else
-        form_data
-      end
-
-    req_options = [
-      headers: [
-        {"Authorization", "Bearer #{client.api_key}"}
-      ],
-      form_multipart: form_data,
-      connect_options: [timeout: 60_000],
-      receive_timeout: 60_000
-    ]
-
-    "#{client.base_url}/audio/transcriptions"
-    |> client.http_client.(req_options)
-    |> handle_transcription_response()
-  end
-
-  defp handle_transcription_response({:ok, %{status: status, body: body}}) when status in 200..299 do
-    text =
-      case body do
-        %{"text" => text} -> text
-        text when is_binary(text) -> text
-        _ -> nil
-      end
-
-    if text do
-      {:ok, text}
-    else
-      {:error, "Invalid response format"}
+      error ->
+        {:error, %{error: %{message: "Unexpected transcription error: #{inspect(error)}"}}}
     end
-  end
+  rescue
+    e in ArgumentError ->
+      {:error, %{error: %{message: "Invalid arguments for transcription: #{inspect(e.message)}"}}}
 
-  defp handle_transcription_response({:ok, %{status: _, body: body}}) do
-    body =
-      if is_binary(body) do
-        case Jason.decode(body) do
-          {:ok, decoded} -> decoded
-          _ -> %{"error" => %{"message" => body}}
-        end
-      else
-        body
-      end
-
-    {:error, body}
-  end
-
-  defp handle_transcription_response({:error, reason}) do
-    {:error, reason}
+    e ->
+      {:error, %{error: %{message: "Transcription error: #{inspect(e)}"}}}
   end
 
   @doc """
@@ -337,7 +247,7 @@ defmodule Alchemind.OpenAI do
   ## Examples
 
       iex> {:ok, client} = Alchemind.OpenAI.new(api_key: "sk-...")
-      iex> Alchemind.OpenAI.speech(client, "Hello, world!", voice: "echo")
+      iex> Alchemind.OpenAI.tts(client, "Hello, world!", voice: "echo")
       {:ok, <<binary audio data>>}
 
   ## Returns
@@ -346,54 +256,22 @@ defmodule Alchemind.OpenAI do
   - `{:error, reason}` - Error with reason
   """
   @impl Alchemind
-  def speech(%Client{} = client, input, opts \\ []) when is_binary(input) do
-    payload = %{
-      model: Keyword.get(opts, :model, "gpt-4o-mini-tts"),
-      input: input,
-      voice: Keyword.get(opts, :voice, "alloy"),
-      response_format: Keyword.get(opts, :response_format, "mp3")
-    }
-
-    payload =
-      if speed = Keyword.get(opts, :speed) do
-        Map.put(payload, :speed, speed)
-      else
-        payload
-      end
-
-    case client.http_client.("#{client.base_url}/audio/speech",
-           headers: [
-             {"Authorization", "Bearer #{client.api_key}"},
-             {"Content-Type", "application/json"}
-           ],
-           json: payload
-         ) do
-      {:ok, %{status: 200, body: body}} ->
-        {:ok, body}
-
-      {:ok, %{status: status, body: body}} when status in [400, 401, 429, 500] ->
-        error_message =
-          case body do
-            %{"error" => %{"message" => msg}} ->
-              msg
-
-            "{\"error\":" <> _ = json_body when is_binary(json_body) ->
-              case Jason.decode(json_body) do
-                {:ok, %{"error" => %{"message" => msg}}} -> msg
-                _ -> "Failed to generate speech (Status: #{status})"
-              end
-
-            _ ->
-              "Failed to generate speech (Status: #{status})"
-          end
-
-        {:error, error_message}
+  def speech(client, input, opts \\ []) when is_binary(input) do
+    case text_to_speech(client.rust_client, input, opts) do
+      audio_data when is_binary(audio_data) ->
+        {:ok, audio_data}
 
       {:error, reason} ->
-        {:error, reason}
+        {:error, %{error: %{message: "Text-to-speech failed: #{inspect(reason)}"}}}
 
-      _response ->
-        {:error, "Failed to generate speech"}
+      error ->
+        {:error, %{error: %{message: "Unexpected text-to-speech error: #{inspect(error)}"}}}
     end
+  rescue
+    e in ArgumentError ->
+      {:error, %{error: %{message: "Invalid arguments for text-to-speech: #{inspect(e.message)}"}}}
+
+    e ->
+      {:error, %{error: %{message: "Text-to-speech error: #{inspect(e)}"}}}
   end
 end

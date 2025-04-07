@@ -45,9 +45,8 @@ defmodule Alchemind.OpenAI.MixProject do
   defp deps do
     [
       umbrella_dep(:alchemind),
-      {:req, "~> 0.4"},
-      {:plug, "~> 1.0", only: :test},
-      {:ex_doc, "~> 0.30", only: :dev, runtime: false}
+      {:ex_doc, "~> 0.30", only: :dev, runtime: false},
+      {:rustler, "~> 0.36.1", runtime: false}
     ]
   end
 

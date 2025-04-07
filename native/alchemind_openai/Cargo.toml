@@ -1,0 +1,16 @@
+[package]
+name = "alchemind_openai"
+version = "0.1.0"
+authors = []
+edition = "2021"
+
+[lib]
+name = "alchemind_openai"
+crate-type = ["cdylib"]
+
+[dependencies]
+rustler = "0.36.1"
+async-openai = "0.19.0"
+tokio = { version = "1.36", features = ["full"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
