@@ -14,6 +14,7 @@ defmodule Alchemind.OpenAI do
   # NIF function declarations
   def create_client(_api_key, _base_url), do: :erlang.nif_error(:nif_not_loaded)
   def complete_chat(_client_resource, _messages, _model), do: :erlang.nif_error(:nif_not_loaded)
+  def process_completion_chunk(_client_resource, _messages, _model, _pid, _ref), do: :erlang.nif_error(:nif_not_loaded)
   def transcribe_audio(_client_resource, _audio_binary, _opts), do: :erlang.nif_error(:nif_not_loaded)
   def text_to_speech(_client_resource, _input, _opts), do: :erlang.nif_error(:nif_not_loaded)
 
@@ -130,8 +131,42 @@ defmodule Alchemind.OpenAI do
   @impl Alchemind
   def complete(client, messages, callback_or_opts \\ [], opts \\ [])
 
-  def complete(_client, _messages, callback, _opts) when is_function(callback, 1) do
-    {:error, %{error: %{message: "Streaming is not yet implemented for the OpenAI provider."}}}
+  def complete(client, messages, callback, opts) when is_function(callback, 1) do
+    messages = List.wrap(messages)
+    model = opts[:model] || client.model
+
+    if model do
+      converted_messages =
+        Enum.map(messages, fn %{role: role, content: content} ->
+          %Message{
+            role: to_string(role),
+            content: content
+          }
+        end)
+
+      # Create a unique reference for this stream
+      ref = make_ref()
+
+      # Start the streaming process
+      spawn_link(fn ->
+        # Store these for subsequent processing inside the handler
+        stream_context = %{
+          client: client.rust_client,
+          messages: converted_messages,
+          model: model
+        }
+
+        # Process the first batch of chunks
+        process_completion_chunk(client.rust_client, converted_messages, model, self(), ref)
+
+        # Keep processing until done
+        stream_handler(callback, ref, model, stream_context)
+      end)
+
+      {:ok, :stream_started}
+    else
+      {:error, %{error: %{message: "Model must be specified in the options for the OpenAI provider."}}}
+    end
   end
 
   def complete(client, messages, opts, additional_opts) when is_list(opts) and is_list(additional_opts) do
@@ -273,5 +308,65 @@ defmodule Alchemind.OpenAI do
 
     e ->
       {:error, %{error: %{message: "Text-to-speech error: #{inspect(e)}"}}}
+  end
+
+  # Helper function to handle streaming responses from the NIF
+  defp stream_handler(callback, ref, model, stream_context) do
+    # Set up initial response structure
+    response = %{
+      id: "rust-client-stream-#{System.os_time(:millisecond)}",
+      object: "chat.completion",
+      created: System.os_time(:second),
+      model: model,
+      choices: [
+        %{
+          index: 0,
+          message: %{
+            role: :assistant,
+            content: ""
+          },
+          finish_reason: nil
+        }
+      ]
+    }
+
+    stream_handler_loop(callback, ref, response, "", stream_context)
+  end
+
+  defp stream_handler_loop(callback, ref, response, accumulated_content, stream_context) do
+    receive do
+      {:stream_chunk, content, ^ref} ->
+        # Call the user's callback with the delta
+        callback.(%{content: content})
+
+        # Request the next batch of chunks
+        process_completion_chunk(
+          stream_context.client,
+          stream_context.messages,
+          stream_context.model,
+          self(),
+          ref
+        )
+
+        # Continue listening for more chunks
+        stream_handler_loop(callback, ref, response, accumulated_content <> content, stream_context)
+
+      {:stream_error, error, ^ref} ->
+        # Return an error
+        {:error, %{error: %{message: error}}}
+
+      {:stream_done, ^ref} ->
+        # When done, return the complete response with accumulated content
+        updated_response =
+          response
+          |> update_in([:choices, Access.at(0), :message, :content], fn _ -> accumulated_content end)
+          |> update_in([:choices, Access.at(0), :finish_reason], fn _ -> "stop" end)
+
+        {:ok, updated_response}
+    after
+      30_000 ->
+        # Timeout after 30 seconds
+        {:error, %{error: %{message: "Streaming timeout"}}}
+    end
   end
 end

@@ -9,18 +9,16 @@ use async_openai::{
     Client as OpenAIClient,
 };
 use std::collections::HashMap;
+// Used for the StreamExt trait which provides the next() method for async streams
+use futures_util::StreamExt;
 
 // Define the resource struct that will be accessible from Elixir
 pub struct OpenAIClientResource {
     client: Arc<Mutex<OpenAIClient<OpenAIConfig>>>,
 }
 
-// Implement Resource trait directly for the resource
-impl rustler::Resource for OpenAIClientResource {
-    fn destructor(self, _env: rustler::Env<'_>) {
-        // No special cleanup needed here
-    }
-}
+// Register the resource type with Rustler at the top level - Reverted, moved back to on_load
+// rustler::resource!(OpenAIClientResource, env);
 
 #[derive(Debug, NifStruct, Serialize, Deserialize)]
 #[module = "Alchemind.OpenAI.Message"]
@@ -49,6 +47,7 @@ fn complete_chat(client_resource: ResourceArc<OpenAIClientResource>, messages: V
         Err(_) => return Err(Error::Term(Box::new("Failed to create Tokio runtime"))),
     };
     
+    // Access the client field correctly through the ResourceArc
     let client = client_resource.client.lock().unwrap();
     
     // Convert messages to OpenAI format
@@ -109,6 +108,115 @@ fn complete_chat(client_resource: ResourceArc<OpenAIClientResource>, messages: V
     }
 }
 
+// Instead of trying to implement the streaming in Rust, which is complex due to thread safety,
+// let's use a more pragmatic approach: we'll create a function that processes a small chunk
+// of the streaming response and call this function multiple times from Elixir to simulate streaming.
+
+#[rustler::nif]
+fn process_completion_chunk(env: Env, client_resource: ResourceArc<OpenAIClientResource>, messages: Vec<Message>, model: &str, stream_pid: rustler::LocalPid, ref_term: Term) -> NifResult<rustler::Atom> {
+    // We'll use a simpler approach - just initiating the request and letting Elixir handle the streaming
+    let runtime = tokio::runtime::Runtime::new().map_err(|e| Error::Term(Box::new(format!("Failed to create Tokio runtime: {}", e))))?;
+    
+    // Access the client field correctly through the ResourceArc
+    let client = match client_resource.client.lock() {
+        Ok(client) => client.clone(),
+        Err(e) => return Err(Error::Term(Box::new(format!("Failed to lock client: {}", e)))),
+    };
+    
+    // Convert messages to OpenAI format
+    let mut chat_messages = Vec::new();
+    
+    for msg in messages {
+        match msg.role.as_str() {
+            "system" => {
+                let message = ChatCompletionRequestSystemMessageArgs::default()
+                    .content(msg.content)
+                    .build()
+                    .map_err(|e| Error::Term(Box::new(format!("Failed to build system message: {}", e))))?;
+                chat_messages.push(message.into());
+            },
+            "assistant" => {
+                let message = async_openai::types::ChatCompletionRequestAssistantMessageArgs::default()
+                    .content(msg.content)
+                    .build()
+                    .map_err(|e| Error::Term(Box::new(format!("Failed to build assistant message: {}", e))))?;
+                chat_messages.push(message.into());
+            },
+            _ => { // default to user message
+                let message = ChatCompletionRequestUserMessageArgs::default()
+                    .content(msg.content)
+                    .build()
+                    .map_err(|e| Error::Term(Box::new(format!("Failed to build user message: {}", e))))?;
+                chat_messages.push(message.into());
+            }
+        }
+    }
+    
+    // Create the completion request with streaming enabled
+    let request = CreateChatCompletionRequestArgs::default()
+        .model(model)
+        .messages(chat_messages)
+        .stream(true)
+        .build()
+        .map_err(|e| Error::Term(Box::new(format!("Failed to build request: {}", e))))?;
+    
+    // Process the request in the runtime but in a blocking way
+    let result = runtime.block_on(async {
+        // Create the stream
+        let mut stream = match client.chat().create_stream(request).await {
+            Ok(s) => s,
+            Err(e) => return Err(format!("Failed to create stream: {}", e)),
+        };
+        
+        // Process up to 10 chunks to keep it responsive
+        let mut chunks = Vec::new();
+        let mut is_done = false;
+        
+        for _ in 0..10 {
+            match stream.next().await {
+                Some(Ok(response)) => {
+                    for choice in response.choices {
+                        if let Some(content) = &choice.delta.content {
+                            chunks.push(content.clone());
+                        }
+                        if choice.finish_reason.is_some() {
+                            is_done = true;
+                        }
+                    }
+                },
+                Some(Err(e)) => return Err(format!("Stream error: {}", e)),
+                None => {
+                    is_done = true;
+                    break;
+                }
+            }
+        }
+        
+        Ok((chunks, is_done))
+    });
+    
+    match result {
+        Ok((chunks, is_done)) => {
+            // Send the chunks to the Elixir process
+            for chunk in chunks {
+                let _ = env.send(&stream_pid, (atoms::stream_chunk(), chunk, ref_term.clone()));
+            }
+            
+            // If we're done, send the done message
+            if is_done {
+                let _ = env.send(&stream_pid, (atoms::stream_done(), ref_term.clone()));
+            }
+            
+            Ok(atoms::ok())
+        },
+        Err(error_msg) => {
+            // Send the error to the Elixir process
+            let _ = env.send(&stream_pid, (atoms::stream_error(), error_msg, ref_term.clone()));
+            Ok(atoms::ok())
+        }
+    }
+}
+
 #[rustler::nif]
 fn transcribe_audio(client_resource: ResourceArc<OpenAIClientResource>, audio_binary: Vec<u8>, opts: HashMap<String, Term>) -> NifResult<String> {
     let runtime = match tokio::runtime::Runtime::new() {
@@ -116,6 +224,7 @@ fn transcribe_audio(client_resource: ResourceArc<OpenAIClientResource>, audio_bi
         Err(_) => return Err(Error::Term(Box::new("Failed to create Tokio runtime"))),
     };
     
+    // Access the client field correctly through the ResourceArc
     let client = match client_resource.client.lock() {
         Ok(client) => client,
         Err(e) => return Err(Error::Term(Box::new(format!("Failed to lock client: {}", e))))
@@ -253,6 +362,7 @@ fn text_to_speech(client_resource: ResourceArc<OpenAIClientResource>, input: Str
         Err(_) => return Err(Error::Term(Box::new("Failed to create Tokio runtime"))),
     };
     
+    // Access the client field correctly through the ResourceArc
     let client = match client_resource.client.lock() {
         Ok(client) => client,
         Err(e) => return Err(Error::Term(Box::new(format!("Failed to lock client: {}", e))))
@@ -367,13 +477,32 @@ fn text_to_speech(client_resource: ResourceArc<OpenAIClientResource>, input: Str
     }
 }
 
+// Load function to register the resource type
 fn on_load(env: Env, _info: Term) -> bool {
-    // Register the resource type outside of any impl blocks
-    env.register::<OpenAIClientResource>().unwrap();
+    // Register the resource type with Rustler
+    rustler::resource!(OpenAIClientResource, env);
     true
 }
 
-rustler::init! {
-    "Elixir.Alchemind.OpenAI",
-    load = on_load
+// Define our atoms
+mod atoms {
+    rustler::atoms! {
+        ok,
+        error,
+        stream_chunk,
+        stream_error,
+        stream_done
+    }
 }
+
+rustler::init!(
+    "Elixir.Alchemind.OpenAI",
+    // [ // Deprecated argument, remove the list of functions - Kept from previous edit
+    //     create_client,
+    //     complete_chat,
+    //     process_completion_chunk,
+    //     transcribe_audio,
+    //     text_to_speech
+    // ],
+    load = on_load
+);
