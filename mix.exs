@@ -38,7 +38,7 @@ defmodule Alchemind.OpenAI.MixProject do
     if local_umbrella_deps?() do
       {dep, in_umbrella: true}
     else
-      {dep, git: "https://github.com/bradleygolden/alchemind.git"}
+      {dep, "~> 0.1.0-rc1"}
     end
   end
 
@@ -59,7 +59,16 @@ defmodule Alchemind.OpenAI.MixProject do
   defp package do
     [
       name: "alchemind_openai",
-      files: ~w(lib .formatter.exs mix.exs README* LICENSE*),
+      files: ~w(
+        lib
+        native/alchemind_openai/src
+        native/alchemind_openai/Cargo.*
+        priv
+        .formatter.exs
+        mix.exs
+        README*
+        LICENSE*
+      ),
       licenses: ["MIT"],
       links: %{
         "GitHub" => "https://github.com/bradleygolden/alchemind"

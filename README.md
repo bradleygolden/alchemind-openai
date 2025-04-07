@@ -18,7 +18,7 @@ This package implements the Alchemind interfaces for OpenAI's API, allowing you 
 | Capability | Support |
 |------------|:-------:|
 | Chat Completions | ✅ |
-| Streaming | ❌ |
+| Streaming | ✅ |
 | Speech to Text | ✅ |
 | Text to Speech | ✅ |
 
