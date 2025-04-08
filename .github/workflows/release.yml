@@ -74,7 +74,7 @@ jobs:
 
       - name: Build the NIF using rustler-precompiled-action
         id: build-crate
-        uses: philss/rustler-precompiled-action@v1.0.1 # Match example action
+        uses: philss/rustler-precompiled-action@v1.1.4 # Update to latest version
         with:
           project-name: alchemind_openai # Your rust crate name
           project-version: ${{ env.PROJECT_VERSION }} # Use extracted version
