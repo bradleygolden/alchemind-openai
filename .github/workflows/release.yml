@@ -2,99 +2,70 @@ name: Build precompiled NIFs
 
 on:
   push:
+    branches:
+      - main
     tags:
-      - '*' # Trigger on any tag
+      - '*'
 
-# Grant permissions for the entire workflow
 permissions:
   contents: write
 
 jobs:
   build_release:
-    # Match example job name structure
     name: NIF ${{ matrix.nif }} - ${{ matrix.job.target }} (${{ matrix.job.os }})
     runs-on: ${{ matrix.job.os }}
     strategy:
       fail-fast: false
       matrix:
-        # NIF versions to build for
-        nif: ["2.17", "2.16", "2.15"] # As per example
-        # Target combinations (OS, Rust target, cross-compile flag)
+        nif: ["2.17", "2.16", "2.15"]
         job:
-          # Linux
-          - { target: x86_64-unknown-linux-gnu, os: ubuntu-20.04, use-cross: false } # Native build
-          # - { target: aarch64-unknown-linux-gnu, os: ubuntu-20.04, use-cross: true }
-          # - { target: x86_64-unknown-linux-musl, os: ubuntu-20.04, use-cross: true }
-          # - { target: aarch64-unknown-linux-musl, os: ubuntu-20.04, use-cross: true }
-          # - { target: riscv64gc-unknown-linux-gnu, os: ubuntu-20.04, use-cross: true }
-          # - { target: arm-unknown-linux-gnueabihf, os: ubuntu-20.04, use-cross: true }
-          # macOS
-          - { target: x86_64-apple-darwin, os: macos-14, use-cross: false }
-          - { target: aarch64-apple-darwin, os: macos-14, use-cross: false }
-          # Windows
-          - { target: x86_64-pc-windows-msvc, os: windows-2019, use-cross: false }
-          # - { target: x86_64-pc-windows-gnu, os: windows-2019, use-cross: false }
-
-    env:
-      # Keep MIX_ENV if needed by build process, remove if not
-      MIX_ENV: prod
-      # Tell cargo where to place the target directory relative to the workspace root
-      CARGO_TARGET_DIR: ${{ github.workspace }}/native/alchemind_openai/target
-      # Cross-compilation flags might still be needed if uncommenting cross targets
-      # CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
-      # RUSTFLAGS: -C linker=aarch64-linux-gnu-gcc
-      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} # Needed for release creation
+          - { target: aarch64-apple-darwin        , os: macos-11      }
+          - { target: aarch64-unknown-linux-gnu   , os: ubuntu-20.04 , use-cross: true }
+          - { target: aarch64-unknown-linux-musl  , os: ubuntu-20.04 , use-cross: true }
+          - { target: arm-unknown-linux-gnueabihf , os: ubuntu-20.04 , use-cross: true }
+          - { target: riscv64gc-unknown-linux-gnu , os: ubuntu-20.04 , use-cross: true }
+          - { target: x86_64-apple-darwin         , os: macos-11      }
+          - { target: x86_64-pc-windows-gnu       , os: windows-2019  }
+          - { target: x86_64-pc-windows-msvc      , os: windows-2019  }
+          - { target: x86_64-unknown-linux-gnu    , os: ubuntu-20.04  }
+          - { target: x86_64-unknown-linux-musl   , os: ubuntu-20.04 , use-cross: true }
 
     steps:
-      - name: Checkout source code
-        uses: actions/checkout@v3 # Match example version
-        with:
-          fetch-depth: 0 # Keep for version extraction
+    - name: Checkout source code
+      uses: actions/checkout@v3
 
-      - name: Extract project version from mix.exs
-        id: get_version # Give this step an ID to reference its output later if needed
-        shell: bash
-        run: |
-          # Correct sed pattern to match module attribute @version "..."
-          VERSION=$(sed -n 's/^  @version "\(.*\)"/\1/p' mix.exs | head -n1)
-          if [ -z "$VERSION" ]; then
-            echo "::error::Could not extract project version (using @version pattern) from mix.exs at repository root"
-            exit 1
-          fi
-          echo "PROJECT_VERSION=$VERSION" >> $GITHUB_ENV
-          echo "Extracted version: $VERSION"
+    - name: Extract project version
+      shell: bash
+      run: |
+        # Get the project version from mix.exs
+        echo "PROJECT_VERSION=$(sed -n 's/^  @version "\(.*\)"/\1/p' mix.exs | head -n1)" >> $GITHUB_ENV
 
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: stable
-          target: ${{ matrix.job.target }}
+    - name: Install Rust toolchain
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        toolchain: stable
+        target: ${{ matrix.job.target }}
 
-      # Cross-compilation setup would go here if needed
+    - name: Build the project
+      id: build-crate
+      uses: philss/rustler-precompiled-action@v1.1.0
+      with:
+        project-name: alchemind_openai
+        project-version: ${{ env.PROJECT_VERSION }}
+        target: ${{ matrix.job.target }}
+        nif-version: ${{ matrix.nif }}
+        use-cross: ${{ matrix.job.use-cross }}
+        project-dir: "native/alchemind_openai"
 
-      - name: Build the NIF using rustler-precompiled-action
-        id: build-crate
-        uses: philss/rustler-precompiled-action@v1.1.4 # Update to latest version
-        with:
-          project-name: alchemind_openai # Your rust crate name
-          project-version: ${{ env.PROJECT_VERSION }} # Use extracted version
-          target: ${{ matrix.job.target }}
-          nif-version: ${{ matrix.nif }}
-          # Read explicit value from matrix
-          use-cross: ${{ matrix.job.use-cross }}
-          # Path to Rust crate relative to repository root
-          project-dir: "native/alchemind_openai"
+    - name: Artifact upload
+      uses: actions/upload-artifact@v3
+      with:
+        name: ${{ steps.build-crate.outputs.file-name }}
+        path: ${{ steps.build-crate.outputs.file-path }}
 
-      # Publish directly to GitHub Releases within the same job
-      - name: Publish archives and packages to Release
-        uses: softprops/action-gh-release@v1 # Match example action
-        # Only run this step for tag pushes
-        if: startsWith(github.ref, 'refs/tags/')
-        with:
-          # Let the action create/update release based on the tag trigger
-          # Use the file path output directly from the build step
-          files: |
-            ${{ steps.build-crate.outputs.file-path }}
-          # Optionally add release notes, name, etc.
-          # body: "Precompiled NIFs for ${{ env.PROJECT_VERSION }}"
-          # name: "Release ${{ env.PROJECT_VERSION }}"
+    - name: Publish archives and packages
+      uses: softprops/action-gh-release@v1
+      with:
+        files: |
+          ${{ steps.build-crate.outputs.file-path }}
+      if: startsWith(github.ref, 'refs/tags/')
