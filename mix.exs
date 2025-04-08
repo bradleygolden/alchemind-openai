@@ -1,7 +1,7 @@
 defmodule Alchemind.OpenAI.MixProject do
   use Mix.Project
 
-  @version "0.1.0-rc1"
+  @version "0.1.0-rc.1"
 
   def project do
     [
@@ -65,10 +65,9 @@ defmodule Alchemind.OpenAI.MixProject do
       files: ~w(
         lib
         native/alchemind_openai/src
-        native/alchemind_openai/Cargo.*
-        priv
-        priv/native/CHECKSUM.exs
+        native/alchemind_openai/Cargo*
         .formatter.exs
+        "checksum-*.exs",
         mix.exs
         README*
         LICENSE*
