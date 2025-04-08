@@ -22,18 +22,18 @@ jobs:
         # Target combinations (OS, Rust target, cross-compile flag)
         job:
           # Linux
-          - { target: x86_64-unknown-linux-gnu, os: ubuntu-20.04 } # Native build, cross not needed
+          - { target: x86_64-unknown-linux-gnu, os: ubuntu-20.04, use-cross: false } # Native build
           # - { target: aarch64-unknown-linux-gnu, os: ubuntu-20.04, use-cross: true }
           # - { target: x86_64-unknown-linux-musl, os: ubuntu-20.04, use-cross: true }
           # - { target: aarch64-unknown-linux-musl, os: ubuntu-20.04, use-cross: true }
           # - { target: riscv64gc-unknown-linux-gnu, os: ubuntu-20.04, use-cross: true }
           # - { target: arm-unknown-linux-gnueabihf, os: ubuntu-20.04, use-cross: true }
-          # macOS - use-cross should be false (default)
-          - { target: x86_64-apple-darwin, os: macos-14 }
-          - { target: aarch64-apple-darwin, os: macos-14 }
-          # Windows - use-cross should be false (default)
-          - { target: x86_64-pc-windows-msvc, os: windows-2019 }
-          # - { target: x86_64-pc-windows-gnu, os: windows-2019 }
+          # macOS
+          - { target: x86_64-apple-darwin, os: macos-14, use-cross: false }
+          - { target: aarch64-apple-darwin, os: macos-14, use-cross: false }
+          # Windows
+          - { target: x86_64-pc-windows-msvc, os: windows-2019, use-cross: false }
+          # - { target: x86_64-pc-windows-gnu, os: windows-2019, use-cross: false }
 
     env:
       # Keep MIX_ENV if needed by build process, remove if not
@@ -80,7 +80,8 @@ jobs:
           project-version: ${{ env.PROJECT_VERSION }} # Use extracted version
           target: ${{ matrix.job.target }}
           nif-version: ${{ matrix.nif }}
-          use-cross: ${{ matrix.job.use-cross || false }} # Default to false
+          # Read explicit value from matrix
+          use-cross: ${{ matrix.job.use-cross }}
           # Path to Rust crate relative to repository root
           project-dir: "native/alchemind_openai"
 
