@@ -78,14 +78,6 @@ jobs:
           use-cross: ${{ matrix.job.use-cross || false }} # Default to false
           project-dir: "apps/alchemind_openai/native/alchemind_openai" # Path to Rust crate
 
-      # Artifact upload is still useful for debugging or if needed by other jobs (though none exist now)
-      # If not needed, this step can be removed.
-      - name: Artifact upload
-        uses: actions/upload-artifact@v3 # Match example version
-        with:
-          name: ${{ steps.build-crate.outputs.file-name }} # Use output from build step
-          path: ${{ steps.build-crate.outputs.file-path }} # Use output from build step
-
       # Publish directly to GitHub Releases within the same job
       - name: Publish archives and packages to Release
         uses: softprops/action-gh-release@v1 # Match example action
@@ -99,6 +91,3 @@ jobs:
           # Optionally add release notes, name, etc.
           # body: "Precompiled NIFs for ${{ env.PROJECT_VERSION }}"
           # name: "Release ${{ env.PROJECT_VERSION }}"
-
-# Removed the separate publish_release job
-# // ... existing code ... (This comment represents the removed 'publish_release' job) 
