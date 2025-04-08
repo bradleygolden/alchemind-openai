@@ -14,8 +14,8 @@ defmodule Alchemind.OpenAI do
     crate: "alchemind_openai",
     base_url: "https://github.com/bradleygolden/alchemind-openai/releases/download/v#{@version}",
     version: @version,
-    # Force build only when RUSTLER_PRECOMPILATION_EXAMPLE_BUILD is "1" or "true"
-    # Or when the version is a pre-release (like 0.1.0-dev)
+    targets:
+      Enum.uniq(["aarch64-unknown-linux-musl" | RustlerPrecompiled.Config.default_targets()]),
     force_build: System.get_env("ALCHEMIND_OPENAI_BUILD") in ["1", "true"]
 
   @default_base_url "https://api.openai.com/v1"
