@@ -7,15 +7,29 @@ defmodule Alchemind.OpenAI do
 
   @behaviour Alchemind
 
-  use Rustler, otp_app: :alchemind_openai
+  @version Mix.Project.config()[:version]
+
+  use RustlerPrecompiled,
+    otp_app: :alchemind_openai,
+    crate: "alchemind_openai",
+    base_url: "https://github.com/bradleygolden/alchemind-openai/releases/download/v#{@version}",
+    version: @version,
+    # Force build only when RUSTLER_PRECOMPILATION_EXAMPLE_BUILD is "1" or "true"
+    # Or when the version is a pre-release (like 0.1.0-dev)
+    force_build: System.get_env("ALCHEMIND_OPENAI_BUILD") in ["1", "true"]
 
   @default_base_url "https://api.openai.com/v1"
 
   # NIF function declarations
   def create_client(_api_key, _base_url), do: :erlang.nif_error(:nif_not_loaded)
   def complete_chat(_client_resource, _messages, _model), do: :erlang.nif_error(:nif_not_loaded)
-  def process_completion_chunk(_client_resource, _messages, _model, _pid, _ref), do: :erlang.nif_error(:nif_not_loaded)
-  def transcribe_audio(_client_resource, _audio_binary, _opts), do: :erlang.nif_error(:nif_not_loaded)
+
+  def process_completion_chunk(_client_resource, _messages, _model, _pid, _ref),
+    do: :erlang.nif_error(:nif_not_loaded)
+
+  def transcribe_audio(_client_resource, _audio_binary, _opts),
+    do: :erlang.nif_error(:nif_not_loaded)
+
   def text_to_speech(_client_resource, _input, _opts), do: :erlang.nif_error(:nif_not_loaded)
 
   defmodule Client do
@@ -165,11 +179,13 @@ defmodule Alchemind.OpenAI do
 
       {:ok, :stream_started}
     else
-      {:error, %{error: %{message: "Model must be specified in the options for the OpenAI provider."}}}
+      {:error,
+       %{error: %{message: "Model must be specified in the options for the OpenAI provider."}}}
     end
   end
 
-  def complete(client, messages, opts, additional_opts) when is_list(opts) and is_list(additional_opts) do
+  def complete(client, messages, opts, additional_opts)
+      when is_list(opts) and is_list(additional_opts) do
     messages = List.wrap(messages)
     merged_opts = Keyword.merge(opts, additional_opts)
     model = merged_opts[:model] || client.model
@@ -210,7 +226,8 @@ defmodule Alchemind.OpenAI do
           {:error, %{error: %{message: "Rust client error"}}}
       end
     else
-      {:error, %{error: %{message: "Model must be specified in the options for the OpenAI provider."}}}
+      {:error,
+       %{error: %{message: "Model must be specified in the options for the OpenAI provider."}}}
     end
   end
 
@@ -304,7 +321,8 @@ defmodule Alchemind.OpenAI do
     end
   rescue
     e in ArgumentError ->
-      {:error, %{error: %{message: "Invalid arguments for text-to-speech: #{inspect(e.message)}"}}}
+      {:error,
+       %{error: %{message: "Invalid arguments for text-to-speech: #{inspect(e.message)}"}}}
 
     e ->
       {:error, %{error: %{message: "Text-to-speech error: #{inspect(e)}"}}}
@@ -349,7 +367,13 @@ defmodule Alchemind.OpenAI do
         )
 
         # Continue listening for more chunks
-        stream_handler_loop(callback, ref, response, accumulated_content <> content, stream_context)
+        stream_handler_loop(
+          callback,
+          ref,
+          response,
+          accumulated_content <> content,
+          stream_context
+        )
 
       {:stream_error, error, ^ref} ->
         # Return an error
@@ -359,7 +383,9 @@ defmodule Alchemind.OpenAI do
         # When done, return the complete response with accumulated content
         updated_response =
           response
-          |> update_in([:choices, Access.at(0), :message, :content], fn _ -> accumulated_content end)
+          |> update_in([:choices, Access.at(0), :message, :content], fn _ ->
+            accumulated_content
+          end)
           |> update_in([:choices, Access.at(0), :finish_reason], fn _ -> "stop" end)
 
         {:ok, updated_response}

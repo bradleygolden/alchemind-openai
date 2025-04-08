@@ -46,7 +46,8 @@ defmodule Alchemind.OpenAI.MixProject do
     [
       umbrella_dep(:alchemind),
       {:ex_doc, "~> 0.30", only: :dev, runtime: false},
-      {:rustler, "~> 0.36.1", runtime: false}
+      {:rustler, "~> 0.36.1", optional: true, runtime: false},
+      {:rustler_precompiled, "~> 0.8"}
     ]
   end
 
@@ -64,6 +65,7 @@ defmodule Alchemind.OpenAI.MixProject do
         native/alchemind_openai/src
         native/alchemind_openai/Cargo.*
         priv
+        priv/native/CHECKSUM.exs
         .formatter.exs
         mix.exs
         README*
