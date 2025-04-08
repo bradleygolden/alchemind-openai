@@ -1,0 +1,18 @@
+# Configuration for macOS targets to ensure correct dynamic linking of NIFs.
+# See: https://hexdocs.pm/rustler_precompiled/precompilation_guide.html#additional-configuration-before-build
+[target.'cfg(target_os = "macos")']
+rustflags = [
+  "-C", "link-arg=-undefined",
+  "-C", "link-arg=dynamic_lookup",
+]
+
+# Enable Link Time Optimization for release builds to potentially reduce binary size.
+# This may increase compile times.
+[profile.release]
+lto = true
+
+# If you plan to uncomment and build for linux-musl targets, add this section:
+# [target.x86_64-unknown-linux-musl]
+# rustflags = [
+#   "-C", "target-feature=-crt-static"
+# ]
