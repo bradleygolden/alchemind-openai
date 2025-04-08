@@ -34,6 +34,8 @@ jobs:
     env:
       # Keep MIX_ENV if needed by build process, remove if not
       MIX_ENV: prod
+      # Tell cargo where to place the target directory relative to the workspace root
+      CARGO_TARGET_DIR: ${{ github.workspace }}/native/alchemind_openai/target
       # Cross-compilation flags might still be needed if uncommenting cross targets
       # CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
       # RUSTFLAGS: -C linker=aarch64-linux-gnu-gcc
