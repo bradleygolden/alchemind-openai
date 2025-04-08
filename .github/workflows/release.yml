@@ -50,13 +50,7 @@ jobs:
         shell: bash
         # Use the existing version extraction logic
         run: |
-          echo "PROJECT_VERSION=$(sed -n 's/^  version: "\(.*\)",/\1/p' mix.exs | head -n1)" >> $GITHUB_ENV
-          # Check if version was found
-          if [ -z "${{ env.PROJECT_VERSION }}" ]; then
-            echo "Error: Could not extract project version from mix.exs"
-            exit 1
-          fi
-          echo "Extracted version: ${{ env.PROJECT_VERSION }}"
+          echo "PROJECT_VERSION=$(sed -n 's/^  @version "\(.*\)"/\1/p' mix.exs | head -n1)" >> $GITHUB_ENV
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
