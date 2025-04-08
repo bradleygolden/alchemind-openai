@@ -7,10 +7,10 @@ defmodule Alchemind.OpenAI.MixProject do
     [
       app: :alchemind_openai,
       version: @version,
-      build_path: "../../_build",
-      config_path: "../../config/config.exs",
-      deps_path: "../../deps",
-      lockfile: "../../mix.lock",
+      build_path: build_path(),
+      config_path: config_path(),
+      deps_path: deps_path(),
+      lockfile: lockfile(),
       elixir: "~> 1.18",
       start_permanent: Mix.env() == :prod,
       deps: deps(),
@@ -32,15 +32,35 @@ defmodule Alchemind.OpenAI.MixProject do
     ]
   end
 
-  defp local_umbrella_deps? do
-    System.get_env("LOCAL_UMBRELLA_DEPS") == "true"
+  defp build_path do
+    if umbrella?() do
+      "../../_build"
+    else
+      "_build"
+    end
   end
 
-  defp umbrella_dep(dep) do
-    if local_umbrella_deps?() do
-      {dep, in_umbrella: true}
+  defp config_path do
+    if umbrella?() do
+      "../../config/config.exs"
     else
-      {dep, "~> 0.1.0-rc1"}
+      "config/config.exs"
+    end
+  end
+
+  defp deps_path do
+    if umbrella?() do
+      "../../deps"
+    else
+      "deps"
+    end
+  end
+
+  defp lockfile do
+    if umbrella?() do
+      "../../mix.lock"
+    else
+      "mix.lock"
     end
   end
 
@@ -55,7 +75,7 @@ defmodule Alchemind.OpenAI.MixProject do
 
   defp description do
     """
-    An Elixir package for interacting with OpenAI's API, providing a clean and efficient interface for AI operations.
+    An Elixir package for interacting with OpenAI's API
     """
   end
 
@@ -67,7 +87,7 @@ defmodule Alchemind.OpenAI.MixProject do
         native/alchemind_openai/src
         native/alchemind_openai/Cargo*
         .formatter.exs
-        "checksum-*.exs",
+        "checksum-*.exs"
         mix.exs
         README*
         LICENSE*
@@ -77,5 +97,17 @@ defmodule Alchemind.OpenAI.MixProject do
         "GitHub" => "https://github.com/bradleygolden/alchemind"
       }
     ]
+  end
+
+  defp umbrella? do
+    System.get_env("UMBRELLA") == "true"
+  end
+
+  defp umbrella_dep(dep) do
+    if umbrella?() do
+      {dep, in_umbrella: true}
+    else
+      {dep, "~> 0.1.0-rc1"}
+    end
   end
 end
