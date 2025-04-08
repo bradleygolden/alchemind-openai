@@ -25,8 +25,8 @@ jobs:
           # - { target: riscv64gc-unknown-linux-gnu, os: ubuntu-20.04, use-cross: true }
           # - { target: arm-unknown-linux-gnueabihf, os: ubuntu-20.04, use-cross: true }
           # macOS
-          - { target: x86_64-apple-darwin, os: macos-12 } # Example uses macos-12
-          - { target: aarch64-apple-darwin, os: macos-12 }
+          - { target: x86_64-apple-darwin, os: macos-14 } # Example uses macos-14
+          - { target: aarch64-apple-darwin, os: macos-14 }
           # Windows
           - { target: x86_64-pc-windows-msvc, os: windows-2019 } # Example uses 2019
           # - { target: x86_64-pc-windows-gnu, os: windows-2019 }
@@ -48,9 +48,15 @@ jobs:
       - name: Extract project version from mix.exs
         id: get_version # Give this step an ID to reference its output later if needed
         shell: bash
-        # Use the existing version extraction logic
         run: |
-          echo "PROJECT_VERSION=$(sed -n 's/^  @version "\(.*\)"/\1/p' mix.exs | head -n1)" >> $GITHUB_ENV
+          # Correct sed pattern to match module attribute @version "..."
+          VERSION=$(sed -n 's/^  @version "\(.*\)"/\1/p' mix.exs | head -n1)
+          if [ -z "$VERSION" ]; then
+            echo "::error::Could not extract project version (using @version pattern) from mix.exs at repository root"
+            exit 1
+          fi
+          echo "PROJECT_VERSION=$VERSION" >> $GITHUB_ENV
+          echo "Extracted version: $VERSION"
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -69,7 +75,8 @@ jobs:
           target: ${{ matrix.job.target }}
           nif-version: ${{ matrix.nif }}
           use-cross: ${{ matrix.job.use-cross || false }} # Default to false
-          project-dir: "native/alchemind_openai" # Path to Rust crate
+          # Path to Rust crate relative to repository root
+          project-dir: "native/alchemind_openai"
 
       # Publish directly to GitHub Releases within the same job
       - name: Publish archives and packages to Release
