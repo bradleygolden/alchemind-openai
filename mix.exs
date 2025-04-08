@@ -1,10 +1,12 @@
 defmodule Alchemind.OpenAI.MixProject do
   use Mix.Project
 
+  @version "0.1.0-rc1"
+
   def project do
     [
       app: :alchemind_openai,
-      version: "0.1.0-rc1",
+      version: @version,
       build_path: "../../_build",
       config_path: "../../config/config.exs",
       deps_path: "../../deps",
